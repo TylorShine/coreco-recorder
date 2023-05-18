@@ -1,0 +1,9 @@
+soundfile
+sounddevice
+numpy
+librosa
+soxr
+PyYAML
+
+customtkinter
+tinydb

@@ -1,0 +1,157 @@
+name: push
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout commit
+        uses: actions/checkout@master
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@master
+        with: { python-version: 3.10 }
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip PyInstaller
+
+      - name: Make venv
+        run: python -m venv venv
+
+      - name: Install deps
+        run: call venv/Scripts/activate; pip install -r requirements/prod.txt
+
+      - name: build
+        run: call venv/Scripts/activate; pyinstaller --onefile --windowed -p "${{ github.workspace }}\venv\Lib\site-packages" --add-data "venv\Lib\site-packages\customtkinter;customtkinter" --collect-data=librosa src/coreco.py
+  
+      - name: upload
+        uses: actions/upload-artifact@v1
+        with:
+          name: coreco-windows
+          path: dist/coreco.exe
+
+  macOS-build:
+    runs-on: macOS-latest
+    steps:
+      - name: Checkout commit
+        uses: actions/checkout@master
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@master
+        with: { python-version: 3.10 }
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip PyInstaller
+
+      - name: Make venv
+        run: python -m venv venv
+
+      - name: Install deps
+        run: . venv/bin/activate; pip install -r requirements/prod.txt
+
+      - name: build
+        run: . venv/bin/activate; pyinstaller --onefile --windowed -p "${{ github.workspace }}/venv/lib/site-packages" --add-data "venv/lib/site-packages/customtkinter;customtkinter" --collect-data=librosa src/coreco.py
+
+      - name: upload
+        uses: actions/upload-artifact@v1
+        with:
+          name: coreco-macos
+          path: dist/coreco
+
+  ubuntu-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout commit
+        uses: actions/checkout@master
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@master
+        with: { python-version: 3.10 }
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip PyInstaller
+
+      - name: Make venv
+        run: python -m venv venv
+
+      - name: Install deps
+        run: . venv/bin/activate; pip install -r requirements/prod.txt
+
+      - name: build
+        run: . venv/bin/activate; pyinstaller --onefile --windowed -p "${{ github.workspace }}/venv/lib/site-packages" --add-data "venv/lib/site-packages/customtkinter;customtkinter" --collect-data=librosa src/coreco.py
+
+      - name: upload
+        uses: actions/upload-artifact@v1
+        with:
+          name: coreco-linux
+          path: dist/coreco
+
+  release:
+    needs: [ubuntu-build, macOS-build, windows-build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Linux
+        uses: actions/download-artifact@v1
+        with:
+          name: coreco-linux
+
+      - name: Download Mac
+        uses: actions/download-artifact@v1
+        with:
+          name: coreco-macos
+
+      - name: Download Windows
+        uses: actions/download-artifact@v1
+        with:
+          name: coreco-windows
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: CoReco ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Zip
+        run: |
+          tar -C coreco-macos -pczvf coreco-macos.tar.gz coreco
+          tar -C coreco-linux -pczvf coreco-linux.tar.gz coreco
+          zip --junk-paths coreco-windows ./coreco-windows/coreco.exe
+      - name: Append Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./coreco-${{ github.ref }}-macos.tar.gz
+          asset_name: coreco-${{ github.ref }}-macos.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Append Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./coreco-${{ github.ref }}-linux.tar.gz
+          asset_name: coreco-${{ github.ref }}-linux.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Append Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./coreco-${{ github.ref }}-windows.zip
+          asset_name: coreco-${{ github.ref }}-windows.zip
+          asset_content_type: application/zip
