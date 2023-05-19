@@ -20,6 +20,7 @@ def parse_basic5000(yml: Dict[str, Any]):
                         parsed_datas[text_type] = {}
                     parsed_datas[text_type][level] = dv
                 parsed_datas["type"] = corpus_type
+                parsed_datas["name"] = k
                 parsed[int(number)] = parsed_datas
     except Exception as e:
         raise e
@@ -61,6 +62,7 @@ def parse_itacorpus(file: Iterable):
                 if len(texts) > 1:
                     parsed_datas["kana"] = {"0": texts[1].strip()}
                 parsed_datas["type"] = corpus_type
+                parsed_datas["name"] = "_".join((corpus_type, number))
                 parsed[int(number)] = parsed_datas
     except Exception as e:
         raise e
@@ -101,6 +103,7 @@ def parse_oremo_reclist(file: Iterable, name: str):
 
                 parsed_datas = {"text": {"0": phoneme.strip()}}
                 parsed_datas["type"] = text_type
+                parsed_datas["name"] = number
                 parsed[int(number)] = parsed_datas
                 text_index += 1
     except Exception as e:
@@ -129,6 +132,62 @@ def load_oremo_reclist_text(filename: str):
             raise e
 
 
+def parse_mycoeiroink_text(file: Iterable):
+    parsed = {}
+    try:
+        corpus_types = []
+        read_texts = []
+        text_index = 1
+        for l in file:
+            stripped_line = l.strip()
+            if stripped_line != "":
+                read_texts.append(stripped_line)
+                continue
+            if len(read_texts) >= 4:
+                name, text0, kana0, _ = read_texts[:4]
+            else:
+                raise ValueError
+
+            corpus_type, _ = name.split("_", 2)
+
+            parsed_datas = {
+                "text": {"0": text0.strip()},
+                "kana": {"0": kana0.strip()},
+            }
+            parsed_datas["type"] = corpus_type
+            parsed_datas["name"] = name
+            parsed[text_index] = parsed_datas
+
+            if corpus_type not in corpus_types:
+                corpus_types.append(corpus_type)
+            read_texts = []
+            text_index += 1
+    except Exception as e:
+        raise e
+
+    print(f"loaded {len(parsed.keys())} sentences as {','.join(corpus_types)} style")
+    return parsed
+
+
+def load_mycoeiroink_text(filename: str):
+    with open(filename, "r", encoding="utf-8") as f:
+        try:
+            return parse_mycoeiroink_text(f)
+        except Exception as e:
+            print("trying skip first line as header")
+
+        f.seek(0, os.SEEK_SET)
+        next(f)
+        try:
+            return parse_mycoeiroink_text(f)
+        except Exception as e:
+            print(
+                "exception occurred while loading OREMO style text",
+                file=sys.stderr,
+            )
+            raise e
+
+
 def load_texts(filename: str):
     try:
         return load_basic5000_yaml(filename)
@@ -144,6 +203,16 @@ def load_texts(filename: str):
     except Exception as e:
         # print(
         #     "exception occurred while loading ITA-Corpus text",
+        #     file=sys.stderr,
+        # )
+        # traceback.print_exc()
+        pass
+
+    try:
+        return load_mycoeiroink_text(filename)
+    except Exception as e:
+        # print(
+        #     "exception occurred while loading mycoeiroink-Corpus text",
         #     file=sys.stderr,
         # )
         # traceback.print_exc()
