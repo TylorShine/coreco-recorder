@@ -6,7 +6,7 @@ A general-purpose Corpus Recorder
 ## これは？
 CoRecoは言語コーパスやシナリオなどのテキストと音声がペアになっている音声の収録を手助けするソフトウェアです。  
 比較的大きなテキストセットの収録、内容の確認、ファイルの書き出しを主な用途として作成していますが、テキストと音声がセットになるような収録に使用できます。  
-[Releases](releases/latest)からダウンロードできます。
+[Releases](https://github.com/TylorShine/coreco-recorder/releases/latest)からダウンロードできます。
 
 
 ## 主な機能
@@ -85,7 +85,7 @@ CoRecoは言語コーパスやシナリオなどのテキストと音声がペ�
 
 ## 操作方法、収録手順
 1. CoRecoをダウンロードして好きなフォルダに配置
-    - [こちら](releases/latest)からダウンロードしてください。
+    - [こちら](https://github.com/TylorShine/coreco-recorder/releases/latest)からダウンロードしてください。
         - プロジェクト作成時、同一フォルダにプロジェクトフォルダ`projects`が作られるので、新しくフォルダを作成した中へ置くことをおすすめします。
 1. 起動する
 1. プロジェクトをつくる
