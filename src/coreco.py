@@ -13,6 +13,7 @@ import librosa
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+from scipy import signal
 
 from tools import loader, player, project_manager, recorder
 
@@ -43,7 +44,7 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
     ):
         super().__init__(*args, fg_color=fg_color, **kwargs)
         self.title(f"CoReco: {project_manager.get_project_name()}: 音声の書き出し")
-        self.geometry("850x300")
+        self.geometry("850x360")
 
         # modules
         self.project_manager = project_manager
@@ -89,7 +90,14 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
         )
         self.rendering_subtype_list = list(self.rendering_subtype_dict.keys())
         self.rendering_output_dir = "out"
-        self.rendering_file_pattern = "${PROJECT_NAME}/ch${CHANNEL_NUMBER}/${TEXT_TYPE}/${TEXT_TYPE}_${TEXT_NUMBER4}.${OUTPUT_EXT}"
+        self.rendering_file_pattern = (
+            "${PROJECT_NAME}/ch${CHANNEL_NUMBER}/${TEXT_TYPE}/${TEXT_NAME}.${OUTPUT_EXT}"
+        )
+        self.filter_order_db_dict = {"OFF": 0}
+        self.filter_order_db_dict.update(**{f"{n * -6}dB/oct": n for n in range(1, 13)})
+        self.filter_order_db_list = list(self.filter_order_db_dict.keys())
+        self.filter_hpf_order = 0
+        self.filter_lpf_order = 0
 
         self.is_rendering = False
         self.render_thread = None
@@ -99,6 +107,8 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
         self.var_format = tkinter.StringVar(self, self.rendering_format)
         self.var_subtype = tkinter.StringVar(self, self.rendering_subtype)
         self.var_is_normalize = tkinter.BooleanVar(self, True)
+        self.var_hpf_order = tkinter.StringVar(self, "OFF")
+        self.var_lpf_order = tkinter.StringVar(self, "OFF")
         self.var_channels = tkinter.StringVar(self, "1-4")
         self.var_file_pattern = tkinter.StringVar(self, self.rendering_file_pattern)
         self.var_output_dir = tkinter.StringVar(self, self.rendering_output_dir)
@@ -110,7 +120,7 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
         self.main_frame = customtkinter.CTkFrame(self, width=480, corner_radius=0)
         self.main_frame.grid(row=0, column=0, sticky="nsew")
         self.main_frame.grid_columnconfigure((1, 2, 3), weight=1)
-        self.main_frame.grid_rowconfigure((0, 1, 2, 3, 4, 5, 6), weight=1)
+        self.main_frame.grid_rowconfigure((0, 1, 2, 3, 4, 5, 6, 7), weight=1)
         # self.sidebar_frame = customtkinter.CTkFrame(self, width=120, corner_radius=0)
         # self.sidebar_frame.grid(row=0, column=0, rowspan=4, sticky="nsew")
         # self.sidebar_frame.grid_rowconfigure((0, 18), weight=0)
@@ -175,61 +185,85 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
         )
         self.normalize_target_entry.grid(row=1, column=3, padx=16, pady=10, sticky="ew")
 
+        self.filter_hpf_label = customtkinter.CTkLabel(
+            self.main_frame,
+            text="ハイパスフィルタ:",
+            font=customtkinter.CTkFont("Noto Sans JP", size=14),
+        )
+        self.filter_hpf_label.grid(row=2, column=0, padx=16, pady=10)
+        self.filter_hpf_option = customtkinter.CTkOptionMenu(
+            self.main_frame,
+            values=self.filter_order_db_list,
+            variable=self.var_hpf_order,
+            command=self.change_hpf_option_event,
+            font=customtkinter.CTkFont("Noto Sans JP", size=12),
+        )
+        self.filter_hpf_option.grid(row=2, column=1, padx=16, pady=10)
+        self.filter_hpf_entry = customtkinter.CTkEntry(
+            self.main_frame,
+            validate="all",
+            validatecommand=(validate_digit, "%P"),
+            placeholder_text="周波数[Hz]",
+            justify="right",
+            font=customtkinter.CTkFont("Noto Sans JP", size=12),
+        )
+        self.filter_hpf_entry.grid(row=2, column=2, columnspan=2, padx=16, pady=10, sticky="ew")
+
         self.text_number_label = customtkinter.CTkLabel(
             self.main_frame,
             text="テキスト番号範囲:",
             font=customtkinter.CTkFont("Noto Sans JP", size=14),
             anchor="e",
         )
-        self.text_number_label.grid(row=2, column=0, padx=16, pady=10)
+        self.text_number_label.grid(row=3, column=0, padx=16, pady=10)
         self.text_number_entry = customtkinter.CTkEntry(
             self.main_frame,
             placeholder_text="範囲を入力 例: 1-4 (連続範囲)、2,5,7 (個別指定)、1-3,8,11 (組み合わせ)、空欄で全て",
             # textvariable=self.var_channels,
             font=customtkinter.CTkFont("Noto Sans JP", size=12),
         )
-        self.text_number_entry.grid(row=2, column=1, padx=16, pady=10, sticky="ew")
+        self.text_number_entry.grid(row=3, column=1, padx=16, pady=10, sticky="ew")
         self.channels_label = customtkinter.CTkLabel(
             self.main_frame,
             text="チャンネル範囲:",
             font=customtkinter.CTkFont("Noto Sans JP", size=14),
             anchor="e",
         )
-        self.channels_label.grid(row=2, column=2, padx=16, pady=10)
+        self.channels_label.grid(row=3, column=2, padx=16, pady=10)
         self.channels_entry = customtkinter.CTkEntry(
             self.main_frame,
             placeholder_text="範囲を入力 例: 1-4 (連続範囲)、2,5,7 (個別指定)、1-3,8,11 (組み合わせ)、空欄で全て",
             # textvariable=self.var_channels,
             font=customtkinter.CTkFont("Noto Sans JP", size=12),
         )
-        self.channels_entry.grid(row=2, column=3, padx=16, pady=10, sticky="ew")
+        self.channels_entry.grid(row=3, column=3, padx=16, pady=10, sticky="ew")
 
         self.pattern_label = customtkinter.CTkLabel(
             self.main_frame,
             text="ファイル名パターン:",
             font=customtkinter.CTkFont("Noto Sans JP", size=14),
         )
-        self.pattern_label.grid(row=3, column=0, padx=16, pady=10)
+        self.pattern_label.grid(row=4, column=0, padx=16, pady=10)
         self.pattern_entry = customtkinter.CTkEntry(
             self.main_frame,
             placeholder_text="パターンを入力 例: ${PROJECT_NAME}/ch${CHANNEL_NUMBER}/${TEXT_TYPE}/${TEXT_TYPE}_${TEXT_NUMBER4}.${OUTPUT_EXT}",
             font=customtkinter.CTkFont("Noto Sans JP", size=12),
         )
-        self.pattern_entry.grid(row=3, column=1, columnspan=3, padx=16, pady=10, sticky="ew")
+        self.pattern_entry.grid(row=4, column=1, columnspan=3, padx=16, pady=10, sticky="ew")
         self.output_dir_entry = customtkinter.CTkEntry(
             self.main_frame,
             placeholder_text="出力先ディレクトリを入力",
             # textvariable=self.var_output_dir,
             font=customtkinter.CTkFont("Noto Sans JP", size=12),
         )
-        self.output_dir_entry.grid(row=4, column=0, columnspan=3, padx=16, pady=10, sticky="ew")
+        self.output_dir_entry.grid(row=5, column=0, columnspan=3, padx=16, pady=10, sticky="ew")
         self.select_output_dir_button = customtkinter.CTkButton(
             self.main_frame,
             text="参照",
             command=self.select_directory,
             font=customtkinter.CTkFont("Noto Sans JP", size=12),
         )
-        self.select_output_dir_button.grid(row=4, column=3, padx=16, pady=10)
+        self.select_output_dir_button.grid(row=5, column=3, padx=16, pady=10)
 
         self.run_output_button = customtkinter.CTkButton(
             self.main_frame,
@@ -237,7 +271,7 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             command=self.run_rendering,
             font=customtkinter.CTkFont("Noto Sans JP", size=14, weight="bold"),
         )
-        self.run_output_button.grid(row=5, column=0, columnspan=4, padx=16, pady=10, sticky="ew")
+        self.run_output_button.grid(row=6, column=0, columnspan=4, padx=16, pady=10, sticky="ew")
 
         self.status_label = customtkinter.CTkLabel(
             self.main_frame,
@@ -245,14 +279,17 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             font=customtkinter.CTkFont("Noto Sans JP", size=12),
             anchor="w",
         )
-        self.status_label.grid(row=6, column=0, columnspan=4, padx=8, sticky="ew")
+        self.status_label.grid(row=7, column=0, columnspan=4, padx=8, sticky="ew")
 
         # defaults
         self.pattern_entry.insert(0, self.rendering_file_pattern)
         self.output_dir_entry.insert(0, self.rendering_output_dir)
         self.normalize_target_entry.insert(0, "-3.0")
+        self.filter_hpf_entry.insert(0, "60.0")
 
         self.main_frame.bind("<Button-1>", self.set_focus_to_root)
+        self.normalize_target_entry.bind("<KeyPress-Return>", self.set_focus_to_root)
+        self.filter_hpf_entry.bind("<KeyPress-Return>", self.set_focus_to_root)
         self.channels_entry.bind("<KeyPress-Return>", self.set_focus_to_root)
         self.pattern_entry.bind("<KeyPress-Return>", self.set_focus_to_root)
         self.output_dir_entry.bind("<KeyPress-Return>", self.set_focus_to_root)
@@ -280,6 +317,16 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
 
     def change_samplerate_option_event(self, new_selected_samplerate: str):
         self.rendering_samplerate = int(new_selected_samplerate)
+        now_hpf_freq = self.filter_hpf_entry.get()
+        if now_hpf_freq != "" and float(now_hpf_freq) > self.rendering_samplerate / 2:
+            self.filter_hpf_entry.delete(0, "end")
+            self.filter_hpf_entry.insert(0, f"{int(self.rendering_samplerate/2)}")
+
+    def change_hpf_option_event(self, new_selected_order: str):
+        self.filter_hpf_order = self.filter_order_db_dict[new_selected_order]
+
+    def change_lpf_option_event(self, new_selected_order: str):
+        self.filter_lpf_order = self.filter_order_db_dict[new_selected_order]
 
     def validate_digit_callback(self, P):
         try:
@@ -318,6 +365,8 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
         stop_from_end_time: float = 0.0,
         is_normalize: bool = False,
         normalize_target_db: float = -6.0,
+        filt_hp_sos: Optional[Any] = None,
+        filt_lp_sos: Optional[Any] = None,
     ):
         if not os.path.exists(in_filename):
             print(f"error: cannot found file {in_filename}", file=sys.stderr)
@@ -350,33 +399,52 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
                 format=format.upper(),
             ) as fout:
                 stop_sample = int(f.frames - stop_from_end_time * f.samplerate) - start_sample
+
                 # need resample?
                 if is_normalize:
+                    # need hpf?
+                    if not filt_hp_sos is None:
+                        data = signal.sosfilt(filt_hp_sos, f.read(frames=stop_sample))
+                    else:
+                        data = f.read(frames=stop_sample)
                     # normalize peak
                     norm_target = 10 ** (normalize_target_db / 20)
                     if int(f.samplerate) != samplerate:
                         data = librosa.resample(
-                            f.read(frames=stop_sample),
+                            data,
                             orig_sr=f.samplerate,
                             target_sr=samplerate,
                         )
-                    else:
-                        data = f.read(frames=stop_sample)
+
                     data_min, data_max = data.min(), data.max()
                     eps = 1e-15
                     norm_gain = 1.0 / (max(abs(data_min), abs(data_max)) + eps) * norm_target
                     fout.write(data[:] * norm_gain)
                 else:
                     if int(f.samplerate) != samplerate:
-                        fout.write(
-                            librosa.resample(
-                                f.read(frames=stop_sample),
-                                orig_sr=f.samplerate,
-                                target_sr=samplerate,
+                        # need hpf?
+                        if not filt_hp_sos is None:
+                            fout.write(
+                                librosa.resample(
+                                    signal.sosfilt(filt_hp_sos, f.read(frames=stop_sample)),
+                                    orig_sr=f.samplerate,
+                                    target_sr=samplerate,
+                                )
                             )
-                        )
+                        else:
+                            fout.write(
+                                librosa.resample(
+                                    f.read(frames=stop_sample),
+                                    orig_sr=f.samplerate,
+                                    target_sr=samplerate,
+                                )
+                            )
                     else:
-                        fout.write(f.read(frames=stop_sample))
+                        # need hpf?
+                        if not filt_hp_sos is None:
+                            fout.write(signal.sosfilt(filt_hp_sos, f.read(frames=stop_sample)))
+                        else:
+                            fout.write(f.read(frames=stop_sample))
 
     def parse_values_select_text(self, values_text: str):
         targets = []
@@ -431,6 +499,26 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
 
         normalize_db = -3.0 if normalize_db == "" else float(normalize_db)
 
+        hpf_freq = self.filter_hpf_entry.get()
+        hpf_freq = 0.0 if hpf_freq == "" else float(hpf_freq)
+        hpf_sos = (
+            None
+            if self.filter_hpf_order <= 0
+            else signal.butter(
+                self.filter_hpf_order, max(0.0, hpf_freq), "hp", fs=samplerate, output="sos"
+            )
+        )
+
+        # lpf_freq = self.filter_lpf_entry.get()
+        # lpf_freq = 0.0 if lpf_freq == "" else float(lpf_freq)
+        # lpf_sos = (
+        #     None
+        #     if self.filter_lpf_order <= 0
+        #     else signal.butter(
+        #         self.filter_lpf_order, max(0.0, lpf_freq), "lp", fs=samplerate, output="sos"
+        #     )
+        # )
+
         self.is_rendering = True
 
         max_threads = max(1, os.cpu_count() - 2)  # TODO: UI?
@@ -444,11 +532,13 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             take_num,
             ch,
             text,
+            text_name,
             text_type,
             text_num,
             start_time,
             stop_from_end_time,
-            counter=None,
+            hpf_sos=None,
+            lpf_sos=None,
         ):
             if not self.is_rendering:
                 return
@@ -456,6 +546,7 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             substitute_dict = {
                 "PROJECT_NAME": proj_name,
                 "TEXT": text,
+                "TEXT_NAME": text_name,
                 "TEXT_TYPE": text_type,
                 "OUTPUT_EXT": output_format,
                 "CHANNEL_NUMBER": ch,
@@ -489,6 +580,8 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
                 stop_from_end_time=stop_from_end_time,
                 is_normalize=is_normalize,
                 normalize_target_db=normalize_db,
+                filt_hp_sos=hpf_sos,
+                filt_lp_sos=lpf_sos,
             )
             # if not counter is None:
             #     counter += 1
@@ -497,35 +590,37 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             #     executed_count += 1
             #     self.update_status(f"書き出し中... [{executed_count}]")
 
-        print(
-            *[
-                (
-                    f["takes"][f["use_take"]]["record"][c],
-                    f["use_take"],
-                    c,
-                    f["texts"]["text"]["0"],
-                    f["texts"]["type"],
-                    f["id"],
-                    0.0
-                    if "start" not in f["takes"][f["use_take"]]
-                    else f["takes"][f["use_take"]]["start"],
-                    0.0
-                    if "stop_from_end" not in f["takes"][f["use_take"]]
-                    else f["takes"][f["use_take"]]["stop_from_end"],
-                )
-                for f in records
-                if (len(target_text_numbers) <= 0 or str(f["id"]) in target_text_numbers)
-                and "use_take" in f
-                and "record" in f["takes"][f["use_take"]]
-                for c in f["takes"][f["use_take"]]["record"].keys()
-                if len(target_channels) <= 0
-                or c in target_channels
-                and "texts" in f
-                and "type" in f["texts"]
-                and "text" in f["texts"]
-                and "0" in f["texts"]["text"]
-            ]
-        )
+        # print(
+        #     *[
+        #         (
+        #             f["takes"][f["use_take"]]["record"][c],
+        #             f["use_take"],
+        #             c,
+        #             f["texts"]["text"]["0"],
+        #             f["texts"]["name"],
+        #             f["texts"]["type"],
+        #             f["id"],
+        #             0.0
+        #             if "start" not in f["takes"][f["use_take"]]
+        #             else f["takes"][f["use_take"]]["start"],
+        #             0.0
+        #             if "stop_from_end" not in f["takes"][f["use_take"]]
+        #             else f["takes"][f["use_take"]]["stop_from_end"],
+        #         )
+        #         for f in records
+        #         if (len(target_text_numbers) <= 0 or str(f["id"]) in target_text_numbers)
+        #         and "use_take" in f
+        #         and "record" in f["takes"][f["use_take"]]
+        #         for c in f["takes"][f["use_take"]]["record"].keys()
+        #         if len(target_channels) <= 0
+        #         or c in target_channels
+        #         and "texts" in f
+        #         and "name" in f["texts"]
+        #         and "type" in f["texts"]
+        #         and "text" in f["texts"]
+        #         and "0" in f["texts"]["text"]
+        #     ]
+        # )
 
         thread_queue = queue.Queue(maxsize=max_threads)
         # with ThreadPoolExecutor(max_workers=max_threads) as executor:
@@ -535,6 +630,9 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
                 f["use_take"],
                 c,
                 f["texts"]["text"]["0"],
+                f'{f["texts"]["type"]}_{f["id"]:04}'
+                if "name" not in f["texts"]
+                else f["texts"]["name"],
                 f["texts"]["type"],
                 f["id"],
                 0.0
@@ -549,12 +647,9 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             and "use_take" in f
             and "record" in f["takes"][f["use_take"]]
             for c in f["takes"][f["use_take"]]["record"].keys()
-            if len(target_channels) <= 0
-            or c in target_channels
-            and "texts" in f
-            and "type" in f["texts"]
-            and "text" in f["texts"]
-            and "0" in f["texts"]["text"]
+            if len(target_channels) <= 0 or c in target_channels and "texts" in f
+            # and "name" in f["texts"]
+            and "type" in f["texts"] and "text" in f["texts"] and "0" in f["texts"]["text"]
         ]:
             # executor.map(
             #     render_process,
@@ -562,7 +657,7 @@ class RenderingSoundsWindow(customtkinter.CTkToplevel):
             # )
             if thread_queue.full():
                 thread_queue.get().join()
-            renderer_thread = threading.Thread(target=render_process, args=datas)
+            renderer_thread = threading.Thread(target=render_process, args=(*datas, hpf_sos))
             renderer_thread.start()
             thread_queue.put(renderer_thread)
             executed_count += 1

@@ -1,6 +1,7 @@
 soundfile
 sounddevice
 numpy
+scipy
 librosa
 soxr
 PyYAML
