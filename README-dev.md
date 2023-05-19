@@ -5,7 +5,7 @@
 ### 環境構築
 1. リポジトリをクローン
     ```sh
-    $ git clone https://github.com/TylorShine/coreco.git
+    $ git clone https://github.com/TylorShine/coreco-recorder.git
     $ cd coreco
     ```
 1. venv環境を作成、activate
@@ -54,7 +54,7 @@
         ```sh
         > pyinstaller --onefile --windowed \
         -p "`pwd`/venv/lib/site-packages" \
-        --add-data "venv/lib/site-packages/customtkinter;customtkinter" \
+        --add-data "venv/lib/site-packages/customtkinter:customtkinter" \
         --collect-data=librosa \
         src/coreco.py
         ```
